@@ -1,14 +1,17 @@
 ----------------------------------------------------------------------------
+
 -- Requests:
 
 -- Average length of time for each encounter type over the months
 -- Overall numbers of encounters and encounter reasons
 -- Payer distribution for the different payor types
--- % of Patients who had full covid immunity (2 shots) BEFORE the encoutner
+-- % of Patients who had full covid immunity (2 shots) BEFORE the encounter
+-- % of Patients who had full flu immunity (Same year flu shot) BEFORE the encounter
 -- Number of encoutners and base cost for the hospital
 -- Median Time of the encounter
 -- Average LOS
 -- Age distribution
+
 ----------------------------------------------------------------------------
 
 
