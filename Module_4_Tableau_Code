@@ -1,0 +1,83 @@
+WITH flu_2022 AS 
+(
+  SELECT  immunizations.patient,
+	      max(immunizations.date) AS date
+  FROM immunizations
+  WHERE immunizations.code = 5302 
+    AND EXTRACT(year FROM immunizations.date) = '2022'
+  GROUP BY immunizations.patient
+), 
+
+covid_pre as
+(
+  SELECT distinct immunizations.patient,
+                  immunizations.date,
+                  row_number() OVER (PARTITION BY immunizations.patient ORDER BY immunizations.date) AS seq
+  FROM immunizations
+  WHERE lower(immunizations.description) like '%covid%' 
+    AND immunizations.date <= '2023-01-01 00:00:00'
+),
+
+covid as
+(
+	select * 
+	from covid_pre
+	where seq >= 2
+),
+
+cond AS 
+(
+  SELECT DISTINCT conditions.code,
+                  conditions.description
+         FROM conditions
+)
+
+SELECT enc.id AS encounter_id,
+       enc.start,
+       enc.stop,
+       enc.encounterclass,
+       enc.description AS enc_type,
+       enc.base_encounter_cost,
+       enc.total_claim_cost,
+       enc.organization,
+       cond.description AS enc_reason,
+       pay.name AS payer,
+       pay.ownership AS payer_category,
+       pat.id AS patient_id,
+       pat.first,
+       pat.last,
+       pat.birthdate,
+       pat.ethnicity,
+       pat.race,
+       pat.zip,
+       CASE WHEN flu.patient IS NULL THEN 0
+            ELSE 1
+            END AS flu_2022,
+       CASE WHEN cov.patient IS NULL THEN 0
+            ELSE 1
+            END AS covid,
+       org.name AS org_name,
+       org.zip AS org_zip,
+       org.city AS org_city,
+       org.state AS org_state
+FROM encounters enc
+JOIN payers pay 
+  ON enc.payer = pay.id
+JOIN patients pat 
+  ON enc.patient = pat.id
+JOIN organizations org 
+  ON enc.organization = org.id
+JOIN cond 
+  ON enc.reasoncode = cond.code
+LEFT JOIN flu_2022 flu 
+  ON enc.patient = flu.patient 
+ AND enc.start > flu.date
+LEFT JOIN covid cov 
+  ON enc.patient = cov.patient
+ AND enc.start > cov.date
+WHERE 1 = 1 
+  AND enc.stop >= '2022-01-01 00:00:00'
+  AND enc.stop <= '2023-01-01 00:00:00' 
+  AND enc.reasoncode IS NOT NULL
+
+
