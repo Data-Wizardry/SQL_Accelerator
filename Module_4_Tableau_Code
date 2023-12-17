@@ -1,101 +1,72 @@
-----------------------------------------------------------------------------
-
--- Requests:
--- For 2022 Encounters:
--- Average length of time for each encounter type over the months
--- Overall numbers of encounter classes, and encounter types
--- Payer distribution for the different payor types
--- % of Patients who had full covid immunity (2 shots) BEFORE the encounter
--- % of Patients who had full covid immunity (2 shots) BEFORE the encounter
--- Number of encoutners and base cost for the hospital
--- Median Time of the encounter
--- Average LOS
--- Age distribution
--- Most common encounter reasons
-
-----------------------------------------------------------------------------
-
-
-WITH flu_2022 AS 
+with icd_crosswalk as
 (
-  SELECT  immunizations.patient,
-	      max(immunizations.date) AS date
-  FROM immunizations
-  WHERE immunizations.code = 5302 
-    AND EXTRACT(year FROM immunizations.date) = '2022'
-  GROUP BY immunizations.patient
-), 
+  select distinct description,
+         code
+  from postgres.public.conditions
+),
 
-covid_pre as
+flu as
 (
-  SELECT distinct immunizations.patient,
-                  immunizations.date,
-                  row_number() OVER (PARTITION BY immunizations.patient ORDER BY immunizations.date) AS seq
-  FROM immunizations
-  WHERE lower(immunizations.description) like '%covid%' 
-    AND immunizations.date <= '2023-01-01 00:00:00'
+  select patient,
+	     min(date) as date
+  from postgres.public.immunizations
+  where date between '2022-01-01 00:00' and '2023-01-01 00:00'
+    and code = '5302' -- This is the seasonal flu vaccine
+  group by patient
 ),
 
 covid as
 (
-	select * 
-	from covid_pre
-	where seq >= 2
+  select patient,
+	     date,
+	     row_number() over (partition by patient order by date asc) as seq
+  from postgres.public.immunizations
+  where 1=1 
+	and lower(description) like '%covid%'
 ),
 
-cond AS 
+covid_final as
 (
-  SELECT DISTINCT conditions.code,
-                  conditions.description
-         FROM conditions
+	select patient,
+	       date
+	from covid
+	where seq = 2 
 )
 
-SELECT enc.id AS encounter_id,
-       enc.start,
-       enc.stop,
+select enc.id as encounter_id,
        enc.encounterclass,
-       enc.description AS enc_type,
-       enc.base_encounter_cost,
-       enc.total_claim_cost,
-       enc.organization,
-       cond.description AS enc_reason,
-       pay.name AS payer,
-       pay.ownership AS payer_category,
-       pat.id AS patient_id,
-       pat.first,
-       pat.last,
-       pat.birthdate,
-       pat.ethnicity,
-       pat.race,
-       pat.zip,
-       CASE WHEN flu.patient IS NULL THEN 0
-            ELSE 1
-            END AS flu_2022,
-       CASE WHEN cov.patient IS NULL THEN 0
-            ELSE 1
-            END AS covid,
-       org.name AS org_name,
-       org.zip AS org_zip,
-       org.city AS org_city,
-       org.state AS org_state
-FROM encounters enc
-JOIN payers pay 
-  ON enc.payer = pay.id
-JOIN patients pat 
-  ON enc.patient = pat.id
-JOIN organizations org 
-  ON enc.organization = org.id
-JOIN cond 
-  ON enc.reasoncode = cond.code
-LEFT JOIN flu_2022 flu 
-  ON enc.patient = flu.patient 
- AND enc.start > flu.date
-LEFT JOIN covid cov 
-  ON enc.patient = cov.patient
- AND enc.start > cov.date
-WHERE 1 = 1 
-  AND enc.stop >= '2022-01-01 00:00:00'
-  AND enc.stop <= '2023-01-01 00:00:00' 
-  AND enc.reasoncode IS NOT NULL
+	   enc.description as enc_type,
+	   enc.base_encounter_cost,
+	   enc.start,
+	   enc.stop,
+	   case when flu.date < enc.start then 1
+	        else 0
+			end as flu_2022,
+	   case when cov.date < enc.start then 1
+	        else 0
+			end as covid,
+	   icd.description as enc_reason,
+	   pay.name as payer,
+	   pay.ownership as payer_category,
+	   pat.birthdate,
+	   pat.first,
+	   pat.last,
+	   pat.zip,
+	   pat.race,
+	   pat.ethnicity,
+	   pat.id as patient_id
+from postgres.public.encounters as enc
+left join postgres.public.payers as pay
+  on enc.payer = pay.id
+left join postgres.public.patients as pat
+  on enc.patient = pat.id
+join icd_crosswalk as icd
+  on enc.reasoncode = icd.code
+left join flu
+  on enc.patient = flu.patient
+left join covid_final as cov
+  on enc.patient = cov.patient
+where enc.stop >= '2022-01-01 00:00'
+  and enc.stop <  '2023-01-01 00:00'
 
 
