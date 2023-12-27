@@ -1,0 +1,98 @@
+-- Inclusion 1: Must have had ESRD condition traverse 2022
+-- Conditions: 585.4,585.5,585.6
+
+create view vw_esrd_pats_capstone as
+
+with esrd as 
+(
+select start,
+       stop,
+	   patient,
+	   encounter,
+	   row_number() over (partition by patient order by start asc) as seq
+from conditions
+where 1=1
+  and code in ('585.4', '585.5', '585.6')
+  and (      stop between '2022-01-01 00:00' and '2022-12-31 23:59' 
+	     or start between '2022-01-01 00:00' and '2022-12-31 23:59'
+	     or start < '2022-01-01 00:00' and stop is null
+	     or start < '2022-01-01 00:00' and stop > '2022-12-31 23:59'
+	  )
+),
+
+-- Inclusion 2: Patient must have had some encounter in the previous year
+
+active_pat as
+(
+	select distinct patient
+	from encounters
+	where start between '2021-01-01' and '2021-12-31'
+),
+
+
+
+-- Exclusion 1: Transplant patients before 2022 --
+
+transplants as
+(
+select *
+from procedures 
+where code = '55.69'
+),
+
+-- All patients that had a flu shot in 2022
+flu_shots as
+(
+select distinct patient 
+from immunizations
+where date between '2022-01-01 00:00' and '2022-12-31 23:59'
+  and code = '5302'
+),
+
+-- All patients that had their second covid shot by end of 2022
+covid_shots as
+(
+select patient, 
+	   count(*) as number_covid
+from immunizations
+where date <= '2022-12-31 23:59'
+  and lower(description) like '%covid%'
+group by patient
+having count(*) >= 2
+),
+
+
+prep as
+(
+select esrd.start as condition_start,
+       esrd.stop as condition_stop,
+	   pat.deathdate,
+	   trp.start as kidney_transplant_date,
+	   least(trp.start,esrd.stop,pat.deathdate,'2099-01-01') as esrd_end_date,
+	   esrd.patient,
+	   pat.first,
+	   pat.last,
+	   pat.race,
+	   pat.birthdate,
+	   case when flu.patient is null then 0 else 1 end as flu,
+	   case when cov.patient is null then 0 else 1 end as cov,
+	   FLOOR(EXTRACT(EPOCH FROM age(esrd.start,pat.birthdate)) / 31536000) as age
+from esrd
+join active_pat as ap
+  on esrd.patient = ap.patient
+join patients as pat
+  on esrd.patient = pat.id
+left join procedures as trp
+  on esrd.patient = trp.patient
+ and trp.code = '55.69'
+ and trp.start between '2022-01-01 00:00' and '2022-12-31 23:59'
+left join flu_shots as flu
+  on esrd.patient = flu.patient
+left join covid_shots as cov
+  on esrd.patient = cov.patient	
+where seq = 1
+  and (pat.deathdate is null or pat.deathdate < '2022-01-01') -- Exclusion: Death prior to 2022 or middle of 2022
+  and (trp.start is null or trp.start < '2022-01-01') -- Exclusion: Transplants prior to 2022 or middle of 2022
+)
+
+select * from prep
