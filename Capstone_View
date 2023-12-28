@@ -91,8 +91,8 @@ left join flu_shots as flu
 left join covid_shots as cov
   on esrd.patient = cov.patient	
 where seq = 1
-  and (pat.deathdate is null or pat.deathdate < '2022-01-01') -- Exclusion: Death prior to 2022 or middle of 2022
-  and (trp.start is null or trp.start < '2022-01-01') -- Exclusion: Transplants prior to 2022 or middle of 2022
+  and (pat.deathdate is null or pat.deathdate >= '2022-01-01') -- Exclusion: Death prior to 2022 or middle of 2022
+  and (trp.start is null or trp.start >= '2022-01-01') -- Exclusion: Transplants prior to 2022 or middle of 2022
 )
 
 select * from prep
