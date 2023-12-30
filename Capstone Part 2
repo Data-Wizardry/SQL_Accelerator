@@ -1,0 +1,93 @@
+with obs_dates as
+(
+	select cast('2022-01-01' as date) as obs_date
+	union
+	select cast('2022-02-01' as date) as obs_date
+	union
+	select cast('2022-03-01' as date) as obs_date
+	union
+	select cast('2022-04-01' as date) as obs_date
+	union
+	select cast('2022-05-01' as date) as obs_date
+	union
+	select cast('2022-06-01' as date) as obs_date
+	union
+	select cast('2022-07-01' as date) as obs_date
+	union
+	select cast('2022-08-01' as date) as obs_date
+	union
+	select cast('2022-09-01' as date) as obs_date
+	union
+	select cast('2022-10-01' as date) as obs_date
+	union
+	select cast('2022-11-01' as date) as obs_date
+	union
+	select cast('2022-12-01' as date) as obs_date
+),
+
+--
+-- Cleaning dirty data, some lab values are input twice, causing duplicates.
+-- Use distinct instead
+--
+
+labs as
+(
+select distinct patient,
+                date as lab_date,
+	            date_trunc('month',date) as month,
+	            code,
+	            description,
+	            value,
+	            row_number() over (partition by patient, code, date_trunc('month',date) order by date) as nth_lab
+from observations
+where 	
+	(
+	  code = '1751-7'  -- Albumin
+   or code = '6299-2'  -- BUN
+   or code = '49765-1' -- Calcium
+   or code = '2947-0'  -- Sodium
+	  )
+   and date between '2022-01-01 00:00' and '2022-12-31 23:59'
+   --and patient = '02a1bf17-fca5-5978-564c-f4ce26124992' --Test this patient's dupes
+)
+
+
+select prep.condition_start,
+       prep.condition_stop,
+	   prep.deathdate,
+	   prep.kidney_transplant_date,
+	   prep.esrd_end_date,
+	   prep.patient,
+	   prep.first,
+	   prep.last,
+	   prep.race,
+	   prep.birthdate,
+	   prep.age,
+	   obs.obs_date,
+	   alb.value as albumin_value,
+	   bun.value as bun_value,
+	   ca.value as calcium_value,
+	   na.value as sodium_value
+from vw_esrd_pats_capstone as prep
+left join obs_dates as obs
+  on obs.obs_date between prep.condition_start and prep.esrd_end_date
+left join labs as alb
+  on  alb.patient = prep.patient
+  and alb.month = obs.obs_date
+  and alb.code = '1751-7'
+  and alb.nth_lab = 1
+left join labs as bun
+  on  bun.patient = prep.patient
+  and bun.month = obs.obs_date
+  and bun.code = '6299-2'
+  and bun.nth_lab = 1
+left join labs as ca
+  on  ca.patient = prep.patient
+  and ca.month = obs.obs_date
+  and ca.code = '49765-1'
+  and ca.nth_lab = 1
+left join labs as na
+  on  na.patient = prep.patient
+  and na.month = obs.obs_date
+  and na.code = '2947-0'
+  and na.nth_lab = 1
