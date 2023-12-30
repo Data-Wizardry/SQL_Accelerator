@@ -40,28 +40,6 @@ from procedures
 where code = '55.69'
 ),
 
--- All patients that had a flu shot in 2022
-flu_shots as
-(
-select distinct patient 
-from immunizations
-where date between '2022-01-01 00:00' and '2022-12-31 23:59'
-  and code = '5302'
-),
-
--- All patients that had their second covid shot by end of 2022
-covid_shots as
-(
-select patient, 
-	   count(*) as number_covid
-from immunizations
-where date <= '2022-12-31 23:59'
-  and lower(description) like '%covid%'
-group by patient
-having count(*) >= 2
-),
-
-
 prep as
 (
 select esrd.start as condition_start,
@@ -74,8 +52,6 @@ select esrd.start as condition_start,
 	   pat.last,
 	   pat.race,
 	   pat.birthdate,
-	   case when flu.patient is null then 0 else 1 end as flu,
-	   case when cov.patient is null then 0 else 1 end as cov,
 	   FLOOR(EXTRACT(EPOCH FROM age(esrd.start,pat.birthdate)) / 31536000) as age
 from esrd
 join active_pat as ap
@@ -86,10 +62,6 @@ left join procedures as trp
   on esrd.patient = trp.patient
  and trp.code = '55.69'
  and trp.start between '2022-01-01 00:00' and '2022-12-31 23:59'
-left join flu_shots as flu
-  on esrd.patient = flu.patient
-left join covid_shots as cov
-  on esrd.patient = cov.patient	
 where seq = 1
   and (pat.deathdate is null or pat.deathdate >= '2022-01-01') -- Exclusion: Death prior to 2022 or middle of 2022
   and (trp.start is null or trp.start >= '2022-01-01') -- Exclusion: Transplants prior to 2022 or middle of 2022
