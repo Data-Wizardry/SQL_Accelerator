@@ -1,0 +1,255 @@
+---------------------------------------------------------------------------------------
+-- Here, we pull patients who had some encounter with us between 2021 and 2022
+-- These are our "Active" patients. We do this to remove patients from final query who 
+-- may have received care years ago, but maybe moved to a different state, city, etc.
+---------------------------------------------------------------------------------------
+
+with active_pat as
+(
+	select distinct patient
+	from postgres.public.encounters
+	where start between '2021-01-01' and '2022-12-31'
+),
+
+---------------------------------------------------------------------------------------------
+-- Exclusion 1: Transplant Cases, will use this CTE to kick them out of final query later --
+---------------------------------------------------------------------------------------------
+
+transplants as
+(
+select *
+from procedures 
+where code = '55.69'
+),
+
+-------------------------
+-- Our main ESRD cte
+-- This will look at all the patients that had an ICD9 code of 585.6 that traversed 2022
+-- Kicks out transplants and deaths happening before 2022
+-- Keeps patients that are active (and removes inactives)
+
+-- esrd_end_date creates a "gate" that allows us to later contain the months
+-- of 2022 for which the patient actively was ESRD
+-------------------------
+
+esrd as 
+(
+select  cond.start as condition_start
+       ,cond.stop as condition_stop
+	   ,trp.start as kidney_transplant_date
+	   ,pat.deathdate
+	   ,least(trp.start,cond.stop,pat.deathdate,'2099-01-01') as esrd_end_date
+	   ,cond.patient
+	   ,pat.first
+	   ,pat.last
+	   ,FLOOR(EXTRACT(EPOCH FROM age('2022-12-31',pat.birthdate)) / 31536000) as age
+	   ,pat.race
+	   ,pat.ethnicity
+	   ,pat.birthdate
+	   ,pat.city
+	   ,pat.state
+	   ,pat.county
+from postgres.public.conditions as cond
+join postgres.public.patients as pat
+  on cond.patient = pat.id
+join active_pat as ap
+  on cond.patient = ap.patient
+left join postgres.public.procedures as trp
+  on cond.patient = trp.patient
+ and trp.code = '55.69'
+ and trp.start between '2022-01-01 00:00' and '2022-12-31 23:59'
+where 1=1
+  and cond.code in ('585.6')
+  and (     cond.stop  between '2022-01-01 00:00' and '2022-12-31 23:59' 
+	     or cond.start between '2022-01-01 00:00' and '2022-12-31 23:59'
+	     or cond.start < '2022-01-01 00:00' and cond.stop is null
+	     or cond.start < '2022-01-01 00:00' and cond.stop > '2022-12-31 23:59'
+	  )
+  and (pat.deathdate is null or pat.deathdate > '2022-01-01') -- Either death did not happen yet, or it happened sometime after Jan 1st 2022
+  and (trp.start is null or trp.start > '2022-01-01') -- Either transplant did not happen yet, or it happened sometime after Jan 1st 2022
+),
+
+
+-----------------------------------------------------------------------------------------
+-- Here, we are constructing the main dates that we will need to join to the ESRD CTE
+-- This will allow us to build out our patient months
+-----------------------------------------------------------------------------------------
+
+obs_dates as
+(
+	select cast('2022-01-01' as date) as obs_date
+	union
+	select cast('2022-02-01' as date) as obs_date
+	union
+	select cast('2022-03-01' as date) as obs_date
+	union
+	select cast('2022-04-01' as date) as obs_date
+	union
+	select cast('2022-05-01' as date) as obs_date
+	union
+	select cast('2022-06-01' as date) as obs_date
+	union
+	select cast('2022-07-01' as date) as obs_date
+	union
+	select cast('2022-08-01' as date) as obs_date
+	union
+	select cast('2022-09-01' as date) as obs_date
+	union
+	select cast('2022-10-01' as date) as obs_date
+	union
+	select cast('2022-11-01' as date) as obs_date
+	union
+	select cast('2022-12-01' as date) as obs_date
+),
+
+------------------------------------------------------------------------------------------------
+-- Here we create our patient months by joining the dates to the ESRD CTE
+-- Rememebr to use distinct here, and dont include the condition start/stops
+-- or else we may end up getting duplicates in our dataset.
+-- Because some patients will have ESRD conditions resolve, and then renew at a later date.
+------------------------------------------------------------------------------------------------
+
+prep as
+(
+select distinct obs.obs_date
+      -- ,esrd.condition_start -- don't include condition start, or you will get duplicates 
+	  -- ,esrd.condition_stop -- don't include condition stop, or you will get duplicates
+	   ,esrd.deathdate
+       ,esrd.kidney_transplant_date
+       ,esrd.patient
+	   ,esrd.first
+	   ,esrd.last
+	   ,esrd.age
+	   ,esrd.race
+	   ,esrd.ethnicity
+	   ,esrd.birthdate
+	   ,esrd.city
+	   ,esrd.state
+	   ,esrd.county
+from obs_dates as obs
+join esrd
+  on obs.obs_date between condition_start and esrd.esrd_end_date
+order by patient, obs_date
+),
+
+--------------------------------------------------------------------------------------------
+-- Gather all relevant labs, and determine the nth lab per each lab's patient/month combo
+-- e.g. the 1st,2nd,3rd,etc. sodium pulled for Patient X, in Jan 2022
+--------------------------------------------------------------------------------------------
+
+labs as
+(
+select distinct patient
+                ,date as lab_date
+	            ,date_trunc('month',date) as month
+	            ,code
+	            ,description
+	            ,value
+	            ,row_number() over (partition by patient, code, date_trunc('month',date) order by date) as nth_lab
+from postgres.public.observations
+where 	
+	(
+	  code = '1751-7'  -- Albumin
+   or code = '6299-2'  -- BUN
+   or code = '49765-1' -- Calcium
+   or code = '2947-0'  -- Sodium
+	  )
+   and date between '2022-01-01 00:00' and '2022-12-31 23:59'
+   --and patient = '02a1bf17-fca5-5978-564c-f4ce26124992' --Test this patient's dupes
+),
+
+----------------------------------------------------------
+-- Joining in the final labs, and wrapping up the query
+----------------------------------------------------------
+
+final as
+(
+select distinct
+	    prep.obs_date
+	--,prep.esrd_end_date
+	   ,prep.patient
+	   ,prep.first
+	   ,prep.last
+	   ,prep.race
+	   ,prep.birthdate
+	   ,prep.age
+	   ,prep.deathdate
+	   ,prep.city
+	   ,prep.state
+	   ,prep.county
+	   ,prep.kidney_transplant_date
+	   ,alb.value as albumin_value
+	   ,bun.value as bun_value
+	   ,ca.value as calcium_value
+	   ,na.value as sodium_value
+from prep
+left join labs as alb
+  on  alb.patient = prep.patient
+  and alb.month = prep.obs_date
+  and alb.code = '1751-7'
+  and alb.nth_lab = 1
+left join labs as bun
+  on  bun.patient = prep.patient
+  and bun.month = prep.obs_date
+  and bun.code = '6299-2'
+  and bun.nth_lab = 1
+left join labs as ca
+  on  ca.patient = prep.patient
+  and ca.month = prep.obs_date
+  and ca.code = '49765-1'
+  and ca.nth_lab = 1
+left join labs as na
+  on  na.patient = prep.patient
+  and na.month = prep.obs_date
+  and na.code = '2947-0'
+  and na.nth_lab = 1
+order by patient,
+         obs_date
+)
+---------------------
+-- Uncomment, and run this code to test for dupes in our patient/month combo
+-- if any number greater than 1 appears here, this is a signal that there are duplicates
+
+-- if you do see duplicates, make sure to use select distinct in the final cte, and not include
+-- the condition start date or end date
+---------------------
+
+/*
+select patient, 
+       obs_date, 
+	   count(*)
+from final
+group by patient, obs_date
+order by count(*) desc
+*/
+
+select * from final
+
+/*
+prep as
+(
+select esrd.start as condition_start,
+       esrd.stop as condition_stop,
+	   pat.deathdate,
+	   trp.start as kidney_transplant_date,
+	   least(trp.start,esrd.stop,pat.deathdate,'2099-01-01') as esrd_end_date,
+	   esrd.patient,
+	   pat.first,
+	   pat.last,
+	   pat.race,
+	   pat.birthdate,
+	   FLOOR(EXTRACT(EPOCH FROM age('2022-12-31',pat.birthdate)) / 31536000) as age
+from esrd
+join active_pat as ap
+  on esrd.patient = ap.patient
+join patients as pat
+  on esrd.patient = pat.id
+left join procedures as trp
+  on esrd.patient = trp.patient
+ and trp.code = '55.69'
+ and trp.start between '2022-01-01 00:00' and '2022-12-31 23:59'
+where 1 = 1
+  and (pat.deathdate is null or pat.deathdate >= '2022-01-01') -- Exclusion: Death prior to 2022 or middle of 2022
+  and (trp.start is null or trp.start >= '2022-01-01') -- Exclusion: Transplants prior to 2022 or middle of 2022
+)
+*/
