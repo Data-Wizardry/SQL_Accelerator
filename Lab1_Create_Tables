@@ -3,7 +3,7 @@
 
 -- Creates a Schema called "real_data".
 -- This will seperate content that is real from our test Synthea data
-CREATE SCHEMA real_data;
+CREATE SCHEMA IF NOT EXISTS real_data;
 
 -- This creates a table for our HAIs dataset
 -- After it gets created, we will import data into it
