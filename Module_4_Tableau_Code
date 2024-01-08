@@ -1,3 +1,6 @@
+--uncomment out the next line if you would like to build this into a view
+--create view postgres.public.vw_enc_metrics as
+
 with icd_crosswalk as
 (
   select distinct description,
