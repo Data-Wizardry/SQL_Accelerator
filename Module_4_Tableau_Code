@@ -43,6 +43,7 @@ select enc.id as encounter_id,
        enc.encounterclass,
 	   enc.description as enc_type,
 	   enc.base_encounter_cost,
+           enc.total_claim_cost,
 	   enc.start,
 	   enc.stop,
 	   case when flu.date < enc.start then 1
