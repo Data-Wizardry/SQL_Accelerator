@@ -1,0 +1,22 @@
+-- In a Union, you are stacking rows together from two or more data sources. This can be particularly useful for situations where you get similar data from different source systems.
+-- Run this code to understand how a UNION works.
+
+select  'Main EMR System' as Source
+        ,imm.date
+        ,imm.patient
+        ,imm.encounter
+        ,imm.code
+        ,imm.description
+from immunizations as imm
+where date between '2019-01-01 00:00' and '2019-01-01 23:59'
+
+UNION
+
+select 'faxed EMR System' as Source
+        ,imm.date
+        ,imm.patient
+        ,imm.encounter
+        ,imm.code
+        ,imm.description
+from immunizations as imm
+where date between '2018-12-31 00:00' and '2018-12-31 23:59'
